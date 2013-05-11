@@ -39,13 +39,6 @@
 		writedump(local.qResult);
 		</cfscript>
         
-        <!--- Uncomment the following examples to learn more about db.cfc --->
-        <!---
-		
-		
-		--->
-        
-        
         <hr />
 		<h2>Example of running a sql filter on the query before it is executed.</h2>
         <p>The function, "parsedSQLHelloWorld", adds " where lastName='smith' " to the sql statement at the beginning of db.execute(). This causes local.qResult to only contain "Jane Smith".</p>
