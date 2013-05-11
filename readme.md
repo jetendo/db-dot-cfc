@@ -9,7 +9,7 @@
 
 ## Usage
 
-Download the project and place the cfc files in a web site that has CFML configured.  Read and run example.cfc?method=index to see how db-dot-cfc functions.  The example use CFML's query of queries feature to execute queries without a database, so no further configuration is necessary.
+Download the project and place the cfc files in a web site that has CFML configured.  Read and run example.cfc?method=index to see how db-dot-cfc functions.  The examples use CFML's query of queries feature to execute queries without a database, so no further configuration is necessary.
 
 Continue reading the source code and the online documentation on the project home page to learn more about all the options and features of db-dot-cfc.
 
