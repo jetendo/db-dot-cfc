@@ -1,18 +1,13 @@
 <!--- 
-db.cfc - Enhances cfquery by analyzing SQL to enforce security & framework conventions.
+db.cfc
+Version: 0.1.000
 
-Copyright (c) 2013 Far Beyond Code LLC.
-
-Home Page: https://www.jetendo.com/db.html
+Project Home Page: https://www.jetendo.com/manual/view/current/2.1/db-dot-cfc.html
+Github Home Page: https://github.com/jetendo/db-dot-cfc
 
 Licensed under the MIT license
 http://www.opensource.org/licenses/mit-license.php
-
-Version: 0.1.000
-
-Requirements: This component has no external dependencies.
-Compatibility: Railo 4.0, ColdFusion 10.0
-
+Copyright (c) 2013 Far Beyond Code LLC.
  --->
 <cfcomponent output="no" name="db.cfc" hint="Enhances cfquery by analyzing SQL to enforce security & framework conventions.">
 	<cfoutput>
