@@ -104,7 +104,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		var i=0;
 		var s=0;
 		var paramCount=arraylen(variables.arrParam);
-		if(this.dbtype NEQ ""){
+		if(this.dbtype NEQ "" and this.dbtype NEQ "datasource"){
 			queryStruct.dbtype=this.dbtype;	
 			structdelete(queryStruct, 'datasource');
 		}else if(isBoolean(queryStruct.datasource)){
