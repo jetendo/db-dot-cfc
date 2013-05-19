@@ -22,12 +22,14 @@ Copyright (c) 2013 Far Beyond Code LLC.
 			autoReset:true, // Set to false to allow the current db object to retain it's configuration after running db.execute().  Only the parameters will be cleared.
 			lazy:false, // Railo's lazy="true" option returns a simple Java resultset instead of the ColdFusion compatible query object.  This reduces memory usage when some of the columns are unused.
 			disableQueryLog:false, // Set to true to disable query logging.
-			cachedWithin:false, // optionally set to a timespan to enable query caching
+			cacheForSeconds:0, // optionally set to a number of seconds to enable query caching
 			arrQueryLog:[], // Assign a query log to this object.  In Railo, the query log can be shared since arrays are assigned by reference.
 			tablePrefix:"", // Set a table prefix string to be prepend to all table names.
 			sql:"", // specify the full sql statement
 			verifyQueriesEnabled:false, // Enabling sql verification takes more cpu time, so it should only run when testing in development.
-			parseSQLFunctionStruct:{} // Each struct key value should be a function that accepts and returns parsedSQLStruct. Prototype: struct customFunction(required struct parsedSQLStruct, required string defaultDatabaseName);
+			parseSQLFunctionStruct:{}, // Each struct key value should be a function that accepts and returns parsedSQLStruct. Prototype: struct customFunction(required struct parsedSQLStruct, required string defaultDatabaseName);
+			cacheStruct:{}, // Set to an application or server scope struct to store this data in shared memory. Use structnew('soft') on railo to have automatic garbage collection when the JVM is low on memory.
+			cacheEnabled: true // Set to false to disable the query cache
 		};
 		structappend(this.config, ts, true);
         structappend(this, this.config, true);
@@ -86,6 +88,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		</cfscript>
 	</cffunction>
     
+    
     <cffunction name="execute" returntype="any" output="no">
     	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the resulting query object.  Helps to identify query when debugging.">
         <cfscript>
@@ -103,6 +106,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		var k=0;
 		var i=0;
 		var s=0;
+		var hashCode=0;
+		var isSelect=false;
+		var paramCount=0;
+		var a=[];
+		var tempCacheEnabled=false;
+		var curDate=now();
 		var paramCount=arraylen(variables.arrParam);
 		if(this.dbtype NEQ "" and this.dbtype NEQ "datasource"){
 			queryStruct.dbtype=this.dbtype;	
@@ -110,10 +119,11 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		}else if(isBoolean(queryStruct.datasource)){
 			this.throwError("db.datasource must be set before running db.execute() by either using db.table() or db.datasource=""myDatasource"";");
 		}
+		/*
 		if(not isBoolean(this.cachedWithin)){
 			queryStruct.cachedWithin=this.cachedWithin;	
-		}
-        queryStruct.name="db."&arguments.name;
+		}*/
+		queryStruct.name="db."&arguments.name;
 		if(len(this.sql) EQ 0){
 			this.throwError("The sql statement must be set before running db.execute();");
 		}
@@ -122,16 +132,43 @@ Copyright (c) 2013 Far Beyond Code LLC.
 				variables.lastSQL=this.sql;
 				variables.verifySQLParamsAreSecure(this.sql);
 				processedSQL=replacenocase(this.sql,variables.trustSQLString,"","all");
-				processedSQL=variables.parseSQL(processedSQL, this.datasource);
+				processedSQL=trim(variables.parseSQL(processedSQL, this.datasource));
 			}else{
-				processedSQL=replacenocase(replacenocase(this.sql,variables.trustSQLString,"","all"), variables.tableSQLString, "","all");
+				processedSQL=trim(replacenocase(replacenocase(this.sql,variables.trustSQLString,"","all"), variables.tableSQLString, "","all"));
 			}
 		}else{
-			processedSQL=this.sql;
+			processedSQL=trim(this.sql);
 		}
         if(this.disableQueryLog EQ false){
             ArrayAppend(this.arrQueryLog, processedSQL);
         }
+		
+		
+		if(this.cacheEnabled and this.cacheForSeconds){
+			tempCacheEnabled=true;
+		}
+		if(tempCacheEnabled and left(processedSQL, 7) EQ "SELECT "){
+			isSelect=true;
+			a=["dbtype="&this.dbtype&chr(10)&"datasource="&this.datasource&chr(10)&"lazy="&this.lazy&chr(10)&"cacheForSeconds="&this.cacheForSeconds&chr(10)&"tablePrefix="&this.tablePrefix&chr(10)&"sql="&processedSQL&chr(10)];
+			paramCount=arraylen(variables.arrParam);
+			for(k=1;k LTE paramCount;k++){
+				for(i in variables.arrParam[k]){
+					arrayAppend(a, i&"="&variables.arrParam[k][i]&chr(10));
+				}
+			}
+			hashCode=hash(arraytolist(a,""),"sha-256");
+			if(structkeyexists(this.cacheStruct, hashCode)){
+				if(datediff("s", this.cacheStruct[hashCode].date, curDate) LT this.cacheForSeconds){
+					if(this.autoReset){
+						structappend(this, this.config, true);
+					}
+					variables.arrParam=[]; // has to be created separately to ensure it is a separate object
+					return this.cacheStruct[hashCode].result;
+				}else{
+					structdelete(this.cacheStruct, hashCode);
+				}
+			}
+		}
         </cfscript>
         <cftry>
             <cfif paramCount>
@@ -178,7 +215,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		variables.arrParam=[]; // has to be created separately to ensure it is a separate object
         </cfscript>
         <cfif structkeyexists(db, arguments.name)>
-            <cfreturn db[arguments.name]>
+        	<cfscript>
+			if(tempCacheEnabled and isSelect){
+				this.cacheStruct[hashCode]={date:curDate, result:db[arguments.name]};
+			}
+			return db[arguments.name];
+			</cfscript>
         <cfelse>
             <cfreturn true>
         </cfif>
