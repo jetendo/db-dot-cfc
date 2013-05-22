@@ -14,13 +14,14 @@ Copyright (c) 2013 Far Beyond Code LLC.
     <cffunction name="init" access="public" output="no">
     	<cfargument name="ts" type="struct" required="no" default="#structnew()#">
 		<cfscript>
-		this.config={
+		variables.config={
+			insertIdSQL:"select last_insert_id() id", // the select statement required to retrieve the ID just inserted by an insert query.  Automatically executed when using db.insert()
 			identifierQuoteCharacter:'`', // Modify the character that should surround database, table or field names.
 			dbtype:'datasource', // query, hsql or datasource are valid values.
-			datasource:false, // Optional change the datasource.  This option is required if the query doesn't use db.table().
+			datasource:false, // Optional change the datasource.  This option is required if the query doesn't use dbQuery.table().
 			enableTablePrefixing:true, // This allows a table that is usually named "user", to be prefixed so that it is automatically verified/modified to be "prefix_user" when using this component
 			autoReset:true, // Set to false to allow the current db object to retain it's configuration after running db.execute().  Only the parameters will be cleared.
-			lazy:false, // Railo's lazy="true" option returns a simple Java resultset instead of the ColdFusion compatible query object.  This reduces memory usage when some of the columns are unused.
+			lazy:false, // Railo's lazy="true" option returns a simple Java resultset instead of the ColdFusion compatible query result.  This reduces memory usage when some of the columns are unused.
 			disableQueryLog:false, // Set to true to disable query logging.
 			cacheForSeconds:0, // optionally set to a number of seconds to enable query caching
 			arrQueryLog:[], // Assign a query log to this object.  In Railo, the query log can be shared since arrays are assigned by reference.
@@ -31,211 +32,227 @@ Copyright (c) 2013 Far Beyond Code LLC.
 			cacheStruct:{}, // Set to an application or server scope struct to store this data in shared memory. Use structnew('soft') on railo to have automatic garbage collection when the JVM is low on memory.
 			cacheEnabled: true // Set to false to disable the query cache
 		};
-		structappend(this.config, ts, true);
-        structappend(this, this.config, true);
-		
-		// internal variables:
+		structappend(variables.config, arguments.ts, true);
+		if(structkeyexists(arguments.ts, 'parseSQLFunctionStruct')){
+			variables.config.parseSQLFunctionStruct=arguments.ts.parseSQLFunctionStruct;
+		}
+		variables.cacheStruct=variables.config.cacheStruct;
+		structdelete(variables.config, 'cacheStruct');
 		variables.tableSQLString=":ztablesql:";
 		variables.trustSQLString=":ztrustedsql:";
-		variables.arrParam=[];
 		variables.lastSQL="";
+		variables.cachedQueryObject=createobject("dbQuery");
 		return this;
         </cfscript>
     </cffunction>
     
-    <cffunction name="reset" access="public" output="no">
+    <cffunction name="getConfig" access="package" output="no" returntype="struct">
     	<cfscript>
-        structappend(this, this.config, true);
-		variables.arrParam=[];
+		return variables.config;
 		</cfscript>
     </cffunction>
     
-	<cffunction name="table" access="public" returntype="string" output="no">
-    	<cfargument name="name" type="string" required="yes">
-    	<cfargument name="datasource" type="string" required="no" default="#this.datasource#">
+    <cffunction name="processSQL" access="private" output="no" returntype="string">
+    	<cfargument name="configStruct" type="struct" required="yes">
         <cfscript>
-		var zt="";
-		if(this.verifyQueriesEnabled){
-			zt=variables.tableSQLString;
-		}
-		if(len(arguments.datasource)){
-			this.datasource=arguments.datasource;
-			return this.identifierQuoteCharacter&arguments.datasource&this.identifierQuoteCharacter&"."&this.identifierQuoteCharacter&zt&this.tablePrefix&arguments.name&this.identifierQuoteCharacter;
-		}else{
-			return this.identifierQuoteCharacter&zt&this.tablePrefix&arguments.name&this.identifierQuoteCharacter;
-		}
-		</cfscript>
-	</cffunction>
-    
-	<cffunction name="param" access="public" returntype="string" output="no">
-    	<cfargument name="value" type="string" required="yes">
-    	<cfargument name="cfsqltype" type="string" required="no">
-        <cfscript>
-		if(structkeyexists(arguments, 'cfsqltype')){
-			arrayappend(variables.arrParam, {value:arguments.value, cfsqltype:arguments.cfsqltype});
-		}else{
-			if(isnumeric(arguments.value)){
-				if(find(".", arguments.value)){
-					arrayappend(variables.arrParam, {value:arguments.value, cfsqltype:'cf_sql_decimal'});
-				}else{
-					arrayappend(variables.arrParam, {value:arguments.value, cfsqltype:'cf_sql_bigint'});
-				}
+		var processedSQL=0;
+		if(arguments.configStruct.verifyQueriesEnabled){
+			if(compare(arguments.configStruct.sql, variables.lastSQL) NEQ 0){
+				variables.lastSQL=arguments.configStruct.sql;
+				variables.verifySQLParamsAreSecure(arguments.configStruct);
+				processedSQL=replacenocase(arguments.configStruct.sql,variables.trustSQLString,"","all");
+				processedSQL=trim(variables.parseSQL(arguments.configStruct, processedSQL, arguments.configStruct.datasource));
 			}else{
-				arrayappend(variables.arrParam, {value:arguments.value});
+				processedSQL=trim(replacenocase(replacenocase(arguments.configStruct.sql,variables.trustSQLString,"","all"), variables.tableSQLString, "","all"));
+			}
+		}else{
+			processedSQL=trim(arguments.configStruct.sql);
+		}
+        if(arguments.configStruct.disableQueryLog EQ false){
+            ArrayAppend(arguments.configStruct.arrQueryLog, processedSQL);
+        }
+		return processedSQL;
+		</cfscript>
+    </cffunction>
+    
+    
+    <cffunction name="checkQueryCache" access="private" output="no" returntype="struct">
+    	<cfargument name="configStruct" type="struct" required="yes">
+    	<cfargument name="sql" type="string" required="yes">
+    	<cfargument name="nowDate" type="date" required="yes">
+        <cfscript>
+		var arrOption=[];
+		var paramIndex=0;
+		var paramKey=0;
+		var hashCode=0;
+		var currentParamStruct=arguments.configStruct.arrParam;
+		var paramCount=arraylen(currentParamStruct);
+		arrayappend(arrOption, "dbtype="&arguments.configStruct.dbtype&chr(10)&"datasource="&arguments.configStruct.datasource&chr(10)&"lazy="&arguments.configStruct.lazy&chr(10)&"cacheForSeconds="&arguments.configStruct.cacheForSeconds&chr(10)&"tablePrefix="&arguments.configStruct.tablePrefix&chr(10)&"sql="&arguments.sql&chr(10));
+		for(paramIndex=1;paramIndex LTE paramCount;paramIndex++){
+			for(paramKey in currentParamStruct[paramIndex]){
+				arrayAppend(arrOption, paramKey&"="&currentParamStruct[paramIndex][paramKey]&chr(10));
 			}
 		}
-		return "?";
+		hashCode=hash(arraytolist(arrOption,""),"sha-256");
+		if(structkeyexists(variables.cacheStruct, hashCode)){
+			if(datediff("s", variables.cacheStruct[hashCode].date, arguments.nowDate) LT arguments.configStruct.cacheForSeconds){
+				arguments.configStruct.dbQuery.reset();
+				return { success:true, hashCode:hashCode, result:variables.cacheStruct[hashCode].result };
+			}else{
+				structdelete(variables.cacheStruct, hashCode);
+			}
+		}
+		return {success:false, hashCode:hashCode};
 		</cfscript>
-	</cffunction>
+    </cffunction>
     
     
-    <cffunction name="execute" returntype="any" output="no">
-    	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the resulting query object.  Helps to identify query when debugging.">
-        <cfscript>
+    <cffunction name="runQuery" access="private" returntype="any" output="no">
+    	<cfargument name="configStruct" type="struct" required="yes">
+    	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
+    	<cfargument name="sql" type="string" required="yes">
+    	<cfscript>
+		var running=true;
         var queryStruct={
-			lazy=this.lazy,
-			datasource=this.datasource	
+			lazy=arguments.configStruct.lazy,
+			datasource=arguments.configStruct.datasource	
 		};
-        var pos=0;
-		var processedSQL="";
-        var startIndex=1;
-        var curArg=1;
-        var running=true;
-        var db=structnew();
         var cfquery=0;
-		var k=0;
-		var i=0;
-		var s=0;
-		var hashCode=0;
-		var isSelect=false;
-		var paramCount=0;
-		var a=[];
-		var tempCacheEnabled=false;
-		var curDate=now();
-		var paramCount=arraylen(variables.arrParam);
-		if(this.dbtype NEQ "" and this.dbtype NEQ "datasource"){
-			queryStruct.dbtype=this.dbtype;	
+        var db=structnew();
+		var startIndex=1;
+		var tempSQL=0;
+		var paramCount=arraylen(arguments.configStruct.arrParam);
+		var questionMarkPosition=0;
+		var paramIndex=1;
+		var paramDump=0;
+		if(arguments.configStruct.dbtype NEQ "" and arguments.configStruct.dbtype NEQ "datasource"){
+			queryStruct.dbtype=arguments.configStruct.dbtype;	
 			structdelete(queryStruct, 'datasource');
 		}else if(isBoolean(queryStruct.datasource)){
-			this.throwError("db.datasource must be set before running db.execute() by either using db.table() or db.datasource=""myDatasource"";");
+			variables.throwError("dbQuery.init({datasource:datasource}) must be set before running dbQuery.execute() by either using dbQuery.table() or db.datasource=""myDatasource"";");
 		}
-		/*
-		if(not isBoolean(this.cachedWithin)){
-			queryStruct.cachedWithin=this.cachedWithin;	
-		}*/
 		queryStruct.name="db."&arguments.name;
-		if(len(this.sql) EQ 0){
-			this.throwError("The sql statement must be set before running db.execute();");
-		}
-		if(this.verifyQueriesEnabled){
-			if(compare(this.sql, variables.lastSQL) NEQ 0){
-				variables.lastSQL=this.sql;
-				variables.verifySQLParamsAreSecure(this.sql);
-				processedSQL=replacenocase(this.sql,variables.trustSQLString,"","all");
-				processedSQL=trim(variables.parseSQL(processedSQL, this.datasource));
-			}else{
-				processedSQL=trim(replacenocase(replacenocase(this.sql,variables.trustSQLString,"","all"), variables.tableSQLString, "","all"));
-			}
-		}else{
-			processedSQL=trim(this.sql);
-		}
-        if(this.disableQueryLog EQ false){
-            ArrayAppend(this.arrQueryLog, processedSQL);
-        }
-		
-		
-		if(this.cacheEnabled and this.cacheForSeconds){
-			tempCacheEnabled=true;
-		}
-		if(tempCacheEnabled and left(processedSQL, 7) EQ "SELECT "){
-			isSelect=true;
-			a=["dbtype="&this.dbtype&chr(10)&"datasource="&this.datasource&chr(10)&"lazy="&this.lazy&chr(10)&"cacheForSeconds="&this.cacheForSeconds&chr(10)&"tablePrefix="&this.tablePrefix&chr(10)&"sql="&processedSQL&chr(10)];
-			paramCount=arraylen(variables.arrParam);
-			for(k=1;k LTE paramCount;k++){
-				for(i in variables.arrParam[k]){
-					arrayAppend(a, i&"="&variables.arrParam[k][i]&chr(10));
+		</cfscript>
+		<cfif paramCount>
+            <cfquery attributeCollection="#queryStruct#"><cfloop condition="#running#"><cfscript>
+                questionMarkPosition=find("?", arguments.sql, startIndex);
+                </cfscript><cfif questionMarkPosition EQ 0><cfscript>
+				if(paramCount and paramIndex-1 GT paramCount){
+					variables.throwError("db.execute failed: There were more question marks then parameters in the current sql statement.  You must use dbQuery.param() to specify parameters.  A literal question mark is not allowed.<br /><br />SQL Statement:<br />"&arguments.sql);
 				}
-			}
-			hashCode=hash(arraytolist(a,""),"sha-256");
-			if(structkeyexists(this.cacheStruct, hashCode)){
-				if(datediff("s", this.cacheStruct[hashCode].date, curDate) LT this.cacheForSeconds){
-					if(this.autoReset){
-						structappend(this, this.config, true);
-					}
-					variables.arrParam=[]; // has to be created separately to ensure it is a separate object
-					return this.cacheStruct[hashCode].result;
-				}else{
-					structdelete(this.cacheStruct, hashCode);
+				running=false;
+				</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
+                startIndex=questionMarkPosition+1;
+                paramIndex++;
+                </cfscript></cfif></cfloop><cfscript>
+				if(paramCount GT paramIndex-1){ 
+					variables.throwErrorForTooManyParameters(arguments.configStruct);
 				}
-			}
-		}
-        </cfscript>
-        <cftry>
-            <cfif paramCount>
-                <cfquery attributeCollection="#queryStruct#"><cfloop condition="#running#"><cfscript>
-                    pos=find("?", processedSQL, startIndex);
-                    </cfscript><cfif pos EQ 0><cfset running=false><cfelse><cfset s=mid(processedSQL, startIndex, pos-startIndex)>#preserveSingleQuotes(s)#<cfqueryparam attributeCollection="#variables.arrParam[curArg]#"><cfscript>
-                    startIndex=pos+1;
-                    curArg++;
-                    </cfscript></cfif></cfloop><cfscript>
-					if(paramCount GT curArg-1){ 
-						this.throwError("db.execute failed: There were more parameters then question marks in the current sql statement.  You must run db.execute() before building any additional sql statements with the same db object.  If you need to build multiple queries before running execute, you must use a copy of db, such as db2=duplicate(db);<br /><br />SQL Statement:<br />"&processedSQL); 
-					}
-					s=mid(processedSQL, startIndex, len(processedSQL)-(startIndex-1));
-                    </cfscript>#preserveSingleQuotes(s)#</cfquery>
-            <cfelse>
-                <cfquery attributeCollection="#queryStruct#">#preserveSingleQuotes(processedSQL)#</cfquery>
-            </cfif>
-            <cfcatch type="database">
-            	<cfscript>
-				if(this.autoReset){
-					structappend(this, this.config, true);
-				}
-				variables.arrParam=[]; // has to be created separately to ensure it is a separate object
-				</cfscript>
-                <cfif left(trim(processedSQL), 7) NEQ "INSERT "><cfrethrow></cfif>
-                <cfscript>
-                if(this.disableQueryLog EQ false){
-                    ArrayAppend(this.arrQueryLog, "Query ##"& ArrayLen(this.arrQueryLog)&" failed to execute for datasource, "&this.datasource&".<br />CFcatch.message: "&CFcatch.message&"<br />cfcatch.detail: "&cfcatch.detail);
-                }
-                </cfscript>
-                <!--- return false when INSERT fails, because we assume this is a duplicate key error. --->
-                <cfreturn false>
-            </cfcatch>
-            <cfcatch type="any"><cfscript>
-				if(paramCount and curArg GT paramCount){
-					this.throwError("db.execute failed: There were more question marks then parameters in the current sql statement.  You must use db.param() to specify parameters.  A literal question mark is not allowed.<br /><br />SQL Statement:<br />"&processedSQL);
-				}
-				</cfscript><cfrethrow></cfcatch>
-        </cftry>
-		<cfscript>
-		if(this.autoReset){
-        	structappend(this, this.config, true);
-		}
-		variables.arrParam=[]; // has to be created separately to ensure it is a separate object
-        </cfscript>
-        <cfif structkeyexists(db, arguments.name)>
-        	<cfscript>
-			if(tempCacheEnabled and isSelect){
-				this.cacheStruct[hashCode]={date:curDate, result:db[arguments.name]};
-			}
-			return db[arguments.name];
-			</cfscript>
+                tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
+                </cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
         <cfelse>
-            <cfreturn true>
+            <cfquery attributeCollection="#queryStruct#">#preserveSingleQuotes(arguments.sql)#</cfquery>
         </cfif>
-    </cffunction>
-    
-	<cffunction name="trustedSQL" access="public" returntype="string" output="no">
-    	<cfargument name="value" type="string" required="yes">
         <cfscript>
-		if(this.verifyQueriesEnabled){
-			return variables.trustSQLString&arguments.value&variables.trustSQLString;
+		if(structkeyexists(db, arguments.name)){
+			return db[arguments.name];
 		}else{
-			return arguments.value;
+			return true;
 		}
 		</cfscript>
+    </cffunction>
+    
+    <cffunction name="throwErrorForTooManyParameters" access="private" output="no">
+    	<cfargument name="configStruct" type="struct" required="yes">
+    	<cfscript>
+		var errorMessage="db.execute failed: There were more parameters then question marks in the current sql statement.  You must run db.execute() before building any additional sql statements with the same db object.  If you need to build multiple queries before running db.execute() or db.insert(), you must use a copy of db, such as db2=duplicate(db);<br /><br />Previous SQL Statement:<br />";
+		savecontent variable="paramDump"{
+			writedump(arguments.configStruct.arrParam);	
+			if(arguments.configStruct.disableQueryLog EQ false and arraylen(arguments.configStruct.arrQueryLog) GT 1){
+				errorMessage&='Previous SQL statement<br />'&arguments.configStruct.arrQueryLog[arraylen(arguments.configStruct.arrQueryLog)-1];
+			}
+		}
+		variables.throwError(errorMessage&"<br />Current SQL Statement:<br />"&arguments.configStruct.arrQueryLog[arraylen(arguments.configStruct.arrQueryLog)]&"<br />Parameters:<br />"&paramDump);
+		</cfscript>
 	</cffunction>
+    
+    <cffunction name="newQuery" access="public">
+    	<cfargument name="config" type="struct" required="no" default="#{}#">
+        <cfscript>
+		var queryCopy=duplicate(variables.cachedQueryObject);
+		structappend(arguments.config, variables.config, false);
+		arguments.config.dbQuery=queryCopy;
+		arguments.config.parseSQLFunctionStruct=arguments.config.parseSQLFunctionStruct;
+		queryCopy.init(this, arguments.config);
+		return queryCopy;
+		</cfscript>
+	</cffunction>
+    
+    <cffunction name="insertAndReturnID" access="package" returntype="any" output="no" hint="Executes the insert statement and returns the inserted ID if insert was successful.">
+    	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
+    	<cfargument name="configStruct" type="struct" required="yes">
+        <cfscript>
+		var db=0;
+		var result=variables.execute(arguments.name, arguments.configStruct);
+        var queryStruct={
+			lazy=arguments.configStruct.lazy,
+			datasource=arguments.configStruct.datasource,
+			name:"db."&arguments.name&"_id"
+		};
+		</cfscript>
+        <cfif result.success>
+            <cfquery attributeCollection="#queryStruct#">
+            #preserveSingleQuotes(arguments.configStruct.insertIDSQL)#
+            </cfquery>
+            <cfreturn {success:true, result:db[arguments.name&"_id"]}>
+		<cfelse>
+        	<cfreturn result>
+		</cfif>
+    </cffunction>
+    
+    <cffunction name="execute" access="package" returntype="struct" output="yes">
+    	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
+    	<cfargument name="configStruct" type="struct" required="yes">
+        <cfscript>
+		if(not structkeyexists(arguments.configStruct, 'sql') or not len(arguments.configStruct.sql)){
+			variables.throwError("The sql statement must be set before running db.execute();");
+		}
+		
+		local.processedSQL=variables.processSQL(arguments.configStruct);
+		if(arguments.configStruct.cacheEnabled and arguments.configStruct.cacheForSeconds and left(local.processedSQL, 7) EQ "SELECT "){
+			local.tempCacheEnabled=true;
+		}else{
+			local.tempCacheEnabled=false;
+		}
+		if(local.tempCacheEnabled){
+			local.nowDate=now();
+			local.cacheResult=variables.checkQueryCache(arguments.configStruct, local.processedSQL, local.nowDate);
+			if(local.cacheResult.success){
+				return {success:true, result:local.cacheResult.result};
+			}
+		}
+		try{
+			local.result=variables.runQuery(arguments.configStruct, arguments.name, local.processedSQL);
+		}catch(database errorStruct){
+			arguments.configStruct.dbQuery.reset();
+			if(left(trim(local.processedSQL), 7) EQ "INSERT "){
+				return {success:false};
+			}else{
+				rethrow;
+			}
+		}
+		arguments.configStruct.dbQuery.reset();
+		if(isQuery(local.result)){
+			if(local.tempCacheEnabled){
+				variables.cacheStruct[local.cacheResult.hashCode]={date:local.nowDate, result:local.result};
+			}
+			return {success:true, result:local.result};
+		}else{
+            return {success:true, result: true};
+		}
+        </cfscript>
+    </cffunction>
+    
     
     <cffunction name="getCleanSQL" access="private" output="no" returntype="string">
         <cfargument name="sql" type="string" required="yes">
@@ -245,74 +262,72 @@ Copyright (c) 2013 Far Beyond Code LLC.
     </cffunction>
     
     <cffunction name="verifySQLParamsAreSecure" access="private" output="no" returntype="any">
-        <cfargument name="sql" type="string" required="yes">
+        <cfargument name="configStruct" type="struct" required="yes">
         <cfscript>
-        var s=arguments.sql;
-        var a=0;
-        var i=0;
-        var k=0;
+        var sql=arguments.configStruct.sql;
 		// strip trusted sql
-        s=rereplace(s, variables.trustSQLString&".*?"&variables.trustSQLString, chr(9), "all");
+        sql=rereplace(sql, variables.trustSQLString&".*?"&variables.trustSQLString, chr(9), "all");
 		
 		// detect string literals
-        if(find("'", s) NEQ 0 or find('"', s) NEQ 0){
-            this.throwError("The SQL statement can't contain single or double quoted string literals when using the db component.  You must use db.param() to specify all values including constants.<br /><br />SQL Statement:<br />"&variables.getCleanSQL(arguments.sql));	
+        if(find("'", sql) NEQ 0 or find('"', sql) NEQ 0){
+            variables.throwError("The SQL statement can't contain single or double quoted string literals when using the db component.  You must use dbQuery.param() to specify all values including constants.<br /><br />SQL Statement:<br />"&variables.getCleanSQL(arguments.configStruct.sql));	
         }
 		// strip c style comments
-        s=replace(s, chr(10), " ", "all");
-        s=replace(s, chr(13), " ", "all");
-        s=replace(s, chr(9), " ", "all");
-        s=replace(s, "/*", chr(10), "all");
-        s=replace(s, "*/", chr(13), "all");
-        s=replace(s, "*", chr(9), "all");
-        s=rereplace(s, chr(10)&"[^\*]*?"&chr(13), chr(9), "all");
+        sql=replace(sql, chr(10), " ", "all");
+        sql=replace(sql, chr(13), " ", "all");
+        sql=replace(sql, chr(9), " ", "all");
+        sql=replace(sql, "/*", chr(10), "all");
+        sql=replace(sql, "*/", chr(13), "all");
+        sql=replace(sql, "*", chr(9), "all");
+        sql=rereplace(sql, chr(10)&"[^\*]*?"&chr(13), chr(9), "all");
 		
 		// strip table/db/field names
-		if(this.identifierQuoteCharacter NEQ "" and this.identifierQuoteCharacter NEQ "'"){
-        	s=rereplace(s, this.identifierQuoteCharacter&"[^"&this.identifierQuoteCharacter&"]*"&this.identifierQuoteCharacter, chr(9), "all");
+		if(arguments.configStruct.identifierQuoteCharacter NEQ "" and arguments.configStruct.identifierQuoteCharacter NEQ "'"){
+        	sql=rereplace(sql, arguments.configStruct.identifierQuoteCharacter&"[^"&arguments.configStruct.identifierQuoteCharacter&"]*"&arguments.configStruct.identifierQuoteCharacter, chr(9), "all");
 		}
 		
 		// strip words not beginning with a number
-        s=rereplace(s, "[a-zA-Z_][a-zA-Z\._0-9]*", chr(9), "all");
+        sql=rereplace(sql, "[a-zA-Z_][a-zA-Z\._0-9]*", chr(9), "all");
         
 		// detect any remaining numbers
-		if(refind("[0-9]", s) NEQ 0){
-			this.throwError("The SQL statement can't contain literal numbers when using the db component.  You must use db.param() to specify all values including constants.<br /><br />SQL Statement:<br />"&variables.getCleanSQL(arguments.sql)); 	
+		if(refind("[0-9]", sql) NEQ 0){
+			variables.throwError("The SQL statement can't contain literal numbers when using the db component.  You must use dbQuery.param() to specify all values including constants.<br /><br />SQL Statement:<br />"&variables.getCleanSQL(arguments.configStruct.sql)); 	
         }
-        return s;
+        return sql;
         </cfscript> 
     </cffunction>
     
     <cffunction name="parseSQL" access="private" output="no" returntype="any">
+        <cfargument name="configStruct" type="struct" required="yes">
         <cfargument name="sqlString" type="string" required="yes">
         <cfargument name="defaultDatabaseName" type="string" required="yes">
         <cfscript>
         var local=structnew();
-        var c=arguments.sqlString;
+        var tempSQL=arguments.sqlString;
 		local.ps=structnew();
         local.ps.arrError=arraynew(1);
         local.ps.arrTable=arraynew(1);
-        local.c=replace(replace(replace(replace(replace(local.c,chr(10)," ","all"),chr(9)," ","all"),chr(13)," ","all"),")"," ) ","all"),"("," ( ","all");
-        local.c=" "&rereplace(replace(replace(replace(lcase(local.c),"\\"," ","all"),"\'"," ","all"),'\"'," ","all"), "/\*.*?\*/"," ", "all")&" ";
-        local.c=rereplace(local.c,"'[^']*?'","''","all");
-        local.c=rereplace(local.c,'"[^"]*?"',"''","all");
+        tempSQL=replace(replace(replace(replace(replace(tempSQL,chr(10)," ","all"),chr(9)," ","all"),chr(13)," ","all"),")"," ) ","all"),"("," ( ","all");
+        tempSQL=" "&rereplace(replace(replace(replace(lcase(tempSQL),"\\"," ","all"),"\'"," ","all"),'\"'," ","all"), "/\*.*?\*/"," ", "all")&" ";
+        tempSQL=rereplace(tempSQL,"'[^']*?'","''","all");
+        tempSQL=rereplace(tempSQL,'"[^"]*?"',"''","all");
         
-        local.ps.wherePos=findnocase(" where ",local.c);
-        local.ps.setPos=findnocase(" set ",local.c);
-        local.ps.valuesPos=refindnocase("\)\s*values",local.c);
-        local.ps.fromPos=findnocase(" from ",local.c);
-        local.ps.selectPos=findnocase(" select ",local.c);
-        local.ps.insertPos=findnocase(" insert ",local.c);
-        local.ps.replacePos=findnocase(" replace ",local.c);
-        local.ps.intoPos=findnocase(" into ",local.c);
-        local.ps.limitPos=findnocase(" limit ",local.c);
-        local.ps.groupByPos=findnocase(" group by ",local.c);
-        local.ps.orderByPos=findnocase(" order by ",local.c);
-        local.ps.havingPos=findnocase(" having ",local.c);
-        local.ps.firstLeftJoinPos=findnocase(" left join ",local.c);
-        local.ps.firstParenthesisPos=findnocase(" ( ",local.c);
-        local.ps.firstWHEREPos=len(local.c);
-        if(left(trim(local.c), 5) EQ "show "){
+        local.ps.wherePos=findnocase(" where ",tempSQL);
+        local.ps.setPos=findnocase(" set ",tempSQL);
+        local.ps.valuesPos=refindnocase("\)\s*values",tempSQL);
+        local.ps.fromPos=findnocase(" from ",tempSQL);
+        local.ps.selectPos=findnocase(" select ",tempSQL);
+        local.ps.insertPos=findnocase(" insert ",tempSQL);
+        local.ps.replacePos=findnocase(" replace ",tempSQL);
+        local.ps.intoPos=findnocase(" into ",tempSQL);
+        local.ps.limitPos=findnocase(" limit ",tempSQL);
+        local.ps.groupByPos=findnocase(" group by ",tempSQL);
+        local.ps.orderByPos=findnocase(" order by ",tempSQL);
+        local.ps.havingPos=findnocase(" having ",tempSQL);
+        local.ps.firstLeftJoinPos=findnocase(" left join ",tempSQL);
+        local.ps.firstParenthesisPos=findnocase(" ( ",tempSQL);
+        local.ps.firstWHEREPos=len(tempSQL);
+        if(left(trim(tempSQL), 5) EQ "show "){
             if(local.ps.fromPos EQ 0){
                 return arguments.sqlString;
             }
@@ -330,7 +345,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
         }else if(local.ps.limitPos){
             local.ps.firstWHEREPos=local.ps.limitPos;
         }
-        local.ps.lastWHEREPos=len(local.c);
+        local.ps.lastWHEREPos=len(tempSQL);
         if(local.ps.groupByPos){
             local.ps.lastWHEREPos=local.ps.groupByPos;
         }else if(local.ps.orderByPos){
@@ -343,13 +358,13 @@ Copyright (c) 2013 Far Beyond Code LLC.
         local.ps.setStatement="";
         if(local.ps.setPos){
             if(local.ps.wherePos){
-                local.ps.setStatement=mid(local.c, local.ps.setPos+5, local.ps.wherePos-(local.ps.setPos+5));
+                local.ps.setStatement=mid(tempSQL, local.ps.setPos+5, local.ps.wherePos-(local.ps.setPos+5));
             }else{
-                local.ps.setStatement=mid(local.c, local.ps.setPos+5, len(local.c)-(local.ps.setPos+5));
+                local.ps.setStatement=mid(tempSQL, local.ps.setPos+5, len(tempSQL)-(local.ps.setPos+5));
             }
         }
         if(local.ps.wherePos){
-            local.ps.whereStatement=mid(local.c, local.ps.wherePos+6, local.ps.lastWHEREPos-(local.ps.wherePos+6));
+            local.ps.whereStatement=mid(tempSQL, local.ps.wherePos+6, local.ps.lastWHEREPos-(local.ps.wherePos+6));
         }else{
             local.ps.whereStatement="";
         }
@@ -358,15 +373,15 @@ Copyright (c) 2013 Far Beyond Code LLC.
         local.curPos=1;
         while(local.matching){
             local.t9=structnew();
-            local.t9.leftJoinPos=findnocase(" left join ",local.c, local.curPos);
+            local.t9.leftJoinPos=findnocase(" left join ",tempSQL, local.curPos);
             if(local.t9.leftJoinPos EQ 0) break;
-            local.t9.onPos=findnocase(" on ",local.c, local.t9.leftJoinPos+1);
+            local.t9.onPos=findnocase(" on ",tempSQL, local.t9.leftJoinPos+1);
             if(local.t9.onPos EQ 0 or local.t9.onPos GT local.ps.firstWHEREPos){
                 local.t9.onPos=local.ps.firstWHEREPos;
             }
-            local.t9.table=mid(local.c, local.t9.leftJoinPos+11, local.t9.onPos-(local.t9.leftJoinPos+11))
-			if(this.identifierQuoteCharacter NEQ ""){
-				local.t9.table=trim(replace(local.t9.table, this.identifierQuoteCharacter,"","all"));
+            local.t9.table=mid(tempSQL, local.t9.leftJoinPos+11, local.t9.onPos-(local.t9.leftJoinPos+11));
+			if(arguments.configStruct.identifierQuoteCharacter NEQ ""){
+				local.t9.table=trim(replace(local.t9.table, arguments.configStruct.identifierQuoteCharacter,"","all"));
 			}
             if(local.t9.table CONTAINS " as "){
                 local.pos=findnocase(" as ",local.t9.table);
@@ -380,11 +395,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
                 local.t9.table=trim(local.t9.table);
                 local.t9.tableAlias=trim(local.t9.table);
             }
-			if(this.enableTablePrefixing){
+			if(arguments.configStruct.enableTablePrefixing){
 				if(findnocase(variables.tableSQLString,local.t9.table) EQ 0){
-					arrayappend(local.ps.arrError, "All tables in queries must be generated with db.table(table, datasource); function. This table wasn't: "&local.t9.table);
+					arrayappend(local.ps.arrError, "All tables in queries must be generated with dbQuery.table(table, datasource); function. This table wasn't: "&local.t9.table);
 				}else{
-					local.t9.table=replacenocase(local.t9.table,variables.tableSQLString,"");	
+					local.t9.table=replacenocase(local.t9.table,variables.tableSQLString,"");
+					local.t9.tableAlias=replacenocase(local.t9.tableAlias,variables.tableSQLString,"");
 				}
 			}
             local.t9.onstatement="";
@@ -406,27 +422,27 @@ Copyright (c) 2013 Far Beyond Code LLC.
         }else if(local.ps.firstWHEREPos){
             local.ps.endOfFromPos=local.ps.firstWHEREPos;
         }else{
-            local.ps.endOfFromPos=len(local.c);
+            local.ps.endOfFromPos=len(tempSQL);
         }
         
         if(local.ps.intoPos and (local.ps.selectPos EQ 0 or local.ps.selectPos GT local.ps.intoPos)){
             if(local.ps.setPos){
                 local.t9=structnew();
                 local.t9.type="into";
-                local.t9.table=mid(local.c, local.ps.intoPos+5, local.ps.setPos-(local.ps.intoPos+5));
+                local.t9.table=mid(tempSQL, local.ps.intoPos+5, local.ps.setPos-(local.ps.intoPos+5));
                 local.t9.tableAlias=local.t9.table;
                 arrayappend(local.ps.arrTable, local.t9);
             }else if(local.ps.firstParenthesisPos){
                 local.t9=structnew();
                 local.t9.type="into";
-                local.t9.table=mid(local.c, local.ps.intoPos+5, local.ps.firstParenthesisPos-(local.ps.intoPos+5));
+                local.t9.table=mid(tempSQL, local.ps.intoPos+5, local.ps.firstParenthesisPos-(local.ps.intoPos+5));
                 local.t9.tableAlias=local.t9.table;
                 arrayappend(local.ps.arrTable, local.t9);
             }else{
                 if(local.ps.selectPos){
                     local.t9=structnew();
                     local.t9.type="into";
-                    local.t9.table=mid(local.c, local.ps.intoPos+5, local.ps.selectPos-(local.ps.intoPos+5));
+                    local.t9.table=mid(tempSQL, local.ps.intoPos+5, local.ps.selectPos-(local.ps.intoPos+5));
                     local.t9.tableAlias=local.t9.table;
                     arrayappend(local.ps.arrTable, local.t9);
                 }
@@ -434,7 +450,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
         }
         if(local.ps.fromPos){
             
-            local.c2=mid(local.c, local.ps.fromPos+5, local.ps.endOfFromPos-(local.ps.fromPos+5));
+            local.c2=mid(tempSQL, local.ps.fromPos+5, local.ps.endOfFromPos-(local.ps.fromPos+5));
             
             local.c2=replacenocase(replacenocase(replacenocase(replacenocase(replace(replace(local.c2,")"," ","all"),"("," ","all"), " STRAIGHT_JOIN ", " , ","all"), " CROSS JOIN ", " , ","all"), " INNER JOIN ", " , ","all"), " JOIN ", " , ","all");
             local.arrT2=listtoarray(local.c2, ",");
@@ -454,11 +470,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
                     local.t9.table=trim(local.arrT2[local.i2]);
                     local.t9.tableAlias=trim(local.arrT2[local.i2]);
                 }
-				if(this.enableTablePrefixing){
+				if(arguments.configStruct.enableTablePrefixing){
 					if(findnocase(variables.tableSQLString,local.t9.table) EQ 0){
-						arrayappend(local.ps.arrError, "All tables in queries must be generated with db.table(table, datasource); function. This table wasn't: "&local.t9.table);
+						arrayappend(local.ps.arrError, "All tables in queries must be generated with dbQuery.table(table, datasource); function. This table wasn't: "&local.t9.table);
 					}else{
-						local.t9.table=replacenocase(local.t9.table,variables.tableSQLString,this.identifierQuoteCharacter);	
+						local.t9.table=replacenocase(local.t9.table,variables.tableSQLString,arguments.configStruct.identifierQuoteCharacter);
+						local.t9.tableAlias=replacenocase(local.t9.tableAlias,variables.tableSQLString,arguments.configStruct.identifierQuoteCharacter);
 					}
 				}
                 arrayappend(local.ps.arrTable, local.t9);
@@ -473,13 +490,13 @@ Copyright (c) 2013 Far Beyond Code LLC.
                 local.np=local.ps.arrLeftJoin[local.i2+1].leftJoinPos;
             }
             if(local.np NEQ local.ps.arrLeftJoin[local.i2].onPos){
-                local.ps.arrLeftJoin[local.i2].onstatement=mid(local.c, local.ps.arrLeftJoin[local.i2].onPos+4, local.np-(local.ps.arrLeftJoin[local.i2].onPos+4));
+                local.ps.arrLeftJoin[local.i2].onstatement=mid(tempSQL, local.ps.arrLeftJoin[local.i2].onPos+4, local.np-(local.ps.arrLeftJoin[local.i2].onPos+4));
             }
         }
         for(local.i2=1;local.i2 LTE arraylen(local.ps.arrTable);local.i2++){
-			if(this.identifierQuoteCharacter NEQ ""){
-				local.ps.arrTable[local.i2].table=trim(replace(local.ps.arrTable[local.i2].table,this.identifierQuoteCharacter,"","all"));
-				local.ps.arrTable[local.i2].tableAlias=trim(replace(local.ps.arrTable[local.i2].tableAlias,this.identifierQuoteCharacter,"","all"));
+			if(arguments.configStruct.identifierQuoteCharacter NEQ ""){
+				local.ps.arrTable[local.i2].table=trim(replace(local.ps.arrTable[local.i2].table,arguments.configStruct.identifierQuoteCharacter,"","all"));
+				local.ps.arrTable[local.i2].tableAlias=trim(replace(local.ps.arrTable[local.i2].tableAlias,arguments.configStruct.identifierQuoteCharacter,"","all"));
 			}
             if(local.ps.arrTable[local.i2].table DOES NOT CONTAIN "."){
                 local.ps.arrTable[local.i2].table=arguments.defaultDatabaseName&"."&local.ps.arrTable[local.i2].table;
@@ -491,12 +508,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
         }
 		local.ps.defaultDatabaseName=arguments.defaultDatabaseName;
         local.ps.sql=replace(arguments.sqlString, variables.tableSQLString,"","all");
-		for(local.i2 in this.parseSQLFunctionStruct){
-			local.s=this.parseSQLFunctionStruct[local.i2];
+		for(local.i2 in arguments.configStruct.parseSQLFunctionStruct){
+			local.s=arguments.configStruct.parseSQLFunctionStruct[local.i2];
 			local.ps=local.s(local.ps);
 		}
         if(arraylen(local.ps.arrError) NEQ 0){
-			this.throwError(arraytolist(local.ps.arrError, "<br />")&"<br /><br />SQL Statement<br />"&local.ps.sql);
+			variables.throwError(arraytolist(local.ps.arrError, "<br />")&"<br /><br />SQL Statement<br />"&local.ps.sql);
         }
         return local.ps.sql;
         </cfscript>
@@ -505,7 +522,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
     <cffunction name="throwError" access="private" output="yes">
     	<cfargument name="message" type="string" required="yes">
     	<cfscript>
-        throw("An error occured with a query that was built just prior to calling db.execute().<br />"&arguments.message, "custom");
+        throw("An error occured with a query that was built just prior to calling db.execute().<br />"&arguments.message, "database");
 		</cfscript>
     </cffunction>
     
