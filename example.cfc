@@ -4,6 +4,7 @@
 		<cfscript>
 		var db=0;
 		var q=0;
+		var c=0;
 		var local={};
 		</cfscript>
         <h1>db.cfc Example Code</h1>
@@ -35,6 +36,7 @@
 			verifyQueriesEnabled:true,
 			identifierQuoteCharacter:'' // this is usually a backtick, but query of queries doesn't support that character for table names.
 		});
+		c=db.getConfig();
 		q=db.newQuery();
 		q.sql="select * from "&q.table("qTemp", "request")&" where lastName="&q.param("Doe", "cf_sql_varchar");
 		local.qResult=q.execute("qResult");
@@ -45,11 +47,11 @@
 		<h2>Example of running a sql filter on the query before it is executed.</h2>
         <p>The function, "parsedSQLHelloWorld", adds " where lastName='smith' " to the sql statement at the beginning of q.execute(). This causes local.qResult to only contain "Jane Smith".</p>
         <cfscript>
-		q=db.newQuery({parseSQLFunctionStruct:{parsedSQLHelloWorld:this.parsedSQLHelloWorld}});
+		c.parseSQLFunctionStruct={parsedSQLHelloWorld:this.parsedSQLHelloWorld};
+		q=db.newQuery(c);
 		q.sql="select * from "&q.table('qTemp','request');
 		local.qResult=q.execute("qResult");
 		writedump(local.qResult);
-		q=db.newQuery({parseSQLFunctionStruct:{}});
 		</cfscript>
         
         

@@ -1,13 +1,17 @@
 <cfcomponent>
-	<cffunction name="init" access="public" output="no">
+	<cffunction name="init" access="package" output="no">
     	<cfargument name="dbObject" type="component" required="yes">
-    	<cfargument name="config" type="struct" required="yes">
+    	<cfargument name="config" type="struct" required="no">
         <cfscript>
-		if(not structkeyexists(variables, 'config')){
-			variables.config={};
-		}
-		structappend(variables.config, arguments.config, true);
+		variables.config=arguments.dbObject.getConfig();
+		arguments.config.dbQuery=this;
 		variables.db=arguments.dbObject;
+		if(structkeyexists(arguments, 'config')){
+			structappend(variables.config, arguments.config, true);
+			if(structkeyexists(arguments.config, 'parseSQLFunctionStruct')){
+				variables.config.parseSQLFunctionStruct=duplicate(arguments.config.parseSQLFunctionStruct);
+			}
+		}
 		variables.tableSQLString=":ztablesql:";
 		variables.trustSQLString=":ztrustedsql:";
 		variables.config.arrParam=[];
