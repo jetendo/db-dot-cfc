@@ -69,7 +69,7 @@
         
         
         <hr />
-		<h2>Exception because string literal wasn't passed in with q.table().</h2>
+		<h2>Exception because the table name wasn't passed in with q.table().</h2>
         <p>The following code will throw an exception because request.qTemp was not passed in with q.table('qTemp', 'result').
         <cfscript>
 		q.sql="select * from request.qTemp";
