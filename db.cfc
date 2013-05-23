@@ -47,7 +47,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
         </cfscript>
     </cffunction>
     
-    <cffunction name="getConfig" access="package" output="no" returntype="struct">
+    <cffunction name="getConfig" access="public" output="no" returntype="struct">
     	<cfscript>
 		return duplicate(variables.config);
 		</cfscript>
