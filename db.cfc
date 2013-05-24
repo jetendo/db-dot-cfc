@@ -234,11 +234,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
 			local.result=variables.runQuery(arguments.configStruct, arguments.name, local.processedSQL);
 		}catch(database errorStruct){
 			arguments.configStruct.dbQuery.reset();
-			if(left(trim(local.processedSQL), 7) EQ "INSERT "){
-				return {success:false};
-			}else{
-				rethrow;
-			}
+			rethrow;
 		}
 		arguments.configStruct.dbQuery.reset();
 		if(isQuery(local.result)){
