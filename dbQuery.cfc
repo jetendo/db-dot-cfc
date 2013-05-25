@@ -12,12 +12,19 @@
 				variables.config.parseSQLFunctionStruct=duplicate(arguments.config.parseSQLFunctionStruct);
 			}
 		}
+		variables.lastSQL="";
+		variables.lastQueryName="";
 		variables.tableSQLString=":ztablesql:";
 		variables.trustSQLString=":ztrustedsql:";
 		variables.config.arrParam=[];
 		</cfscript>
     </cffunction>
     
+	<cffunction name="getLastSQL" access="package" output="no" hint="Returns a COPY of the config data for debugging purposes.">
+    	<cfscript>
+		return {sql:variables.lastSQL, name:variables.lastQueryName};
+		</cfscript>
+    </cffunction>
     
 	<cffunction name="getConfig" access="public" output="no" hint="Returns a COPY of the config data for debugging purposes.">
     	<cfscript>
@@ -79,6 +86,8 @@
         <cfscript>
 		variables.config.sql=this.sql;
 		var executeResult=variables.db.execute(arguments.name, variables.config);
+		variables.lastSQL=this.sql;
+		variables.lastQueryName=arguments.name;
 		this.reset();
 		return executeResult.result;
 		</cfscript>
@@ -89,6 +98,8 @@
         <cfscript>
 		variables.config.sql=this.sql;
 		var executeResult=variables.db.insertAndReturnId(arguments.name, variables.config);
+		variables.lastSQL=this.sql;
+		variables.lastQueryName=arguments.name;
 		this.reset();
 		return executeResult.result;
 		</cfscript>

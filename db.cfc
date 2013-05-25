@@ -164,11 +164,13 @@ Copyright (c) 2013 Far Beyond Code LLC.
     <cffunction name="throwErrorForTooManyParameters" access="private" output="no">
     	<cfargument name="configStruct" type="struct" required="yes">
     	<cfscript>
+		var s=0;
 		var errorMessage="dbQuery.execute() failed: There were more parameters then question marks in the current sql statement.  You must run dbQuery.execute() before building any additional sql statements with the same db object.  If you need to build multiple queries before executing the query, you must create a new dbQuery object using db.newQuery();<br /><br />";
 		savecontent variable="paramDump"{
 			writedump(arguments.configStruct.arrParam);	
 		}
-		throw(errorMessage&"<br />Current SQL Statement:<br />"&arguments.configStruct.sql&"<br />Parameters:<br />"&paramDump, "database");
+		s=arguments.configStruct.dbQuery.getLastSQL();
+		throw(errorMessage&"<br />Current SQL Statement:<br />"&arguments.configStruct.sql&"<br />Parameters:<br />"&paramDump&"<br /><br />Previous SQL Statement:<br />"&s.sql&"<br />Last Query Name:"&s.name, "database");
 		</cfscript>
 	</cffunction>
     
