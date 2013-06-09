@@ -319,11 +319,11 @@ Copyright (c) 2013 Far Beyond Code LLC.
         parseStruct.insertPos=findnocase(" insert ",tempSQL);
         parseStruct.replacePos=findnocase(" replace ",tempSQL);
         parseStruct.intoPos=findnocase(" into ",tempSQL);
-        parseStruct.limitPos=findnocase(" limit ",tempSQL);
-        parseStruct.groupByPos=findnocase(" group by ",tempSQL);
-        parseStruct.orderByPos=findnocase(" order by ",tempSQL);
-        parseStruct.havingPos=findnocase(" having ",tempSQL);
-        parseStruct.firstLeftJoinPos=findnocase(" left join ",tempSQL);
+        parseStruct.limitPos=findnocase(" limit ",tempSQL, parseStruct.fromPos);
+        parseStruct.groupByPos=findnocase(" group by ",tempSQL, parseStruct.fromPos);
+        parseStruct.orderByPos=findnocase(" order by ",tempSQL, parseStruct.fromPos);
+        parseStruct.havingPos=findnocase(" having ",tempSQL, parseStruct.fromPos);
+        parseStruct.firstLeftJoinPos=findnocase(" left join ",tempSQL, parseStruct.fromPos);
         parseStruct.firstParenthesisPos=findnocase(" ( ",tempSQL);
         parseStruct.firstWHEREPos=len(tempSQL);
         if(left(trim(tempSQL), 5) EQ "show "){
