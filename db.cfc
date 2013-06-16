@@ -133,6 +133,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		queryStruct.name="db."&arguments.name;
 		</cfscript>
 		<cfif paramCount>
+		<cftry>
             <cfquery attributeCollection="#queryStruct#"><cfloop condition="#running#"><cfscript>
                 questionMarkPosition=find("?", arguments.sql, startIndex);
                 </cfscript><cfif questionMarkPosition EQ 0><cfscript>
@@ -140,7 +141,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
 					throw("dbQuery.execute() failed: There were more question marks then parameters in the current sql statement.  You must use dbQuery.param() to specify parameters.  A literal question mark is not allowed.<br /><br />SQL Statement:<br />"&arguments.sql, "database");
 				}
 				running=false;
-				</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
+				</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfif isnull(arguments.configStruct.arrParam[paramIndex].value)><cfset arguments.configStruct.arrParam[paramIndex].null=true></cfif><cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
                 startIndex=questionMarkPosition+1;
                 paramIndex++;
                 </cfscript></cfif></cfloop><cfscript>
@@ -149,6 +150,11 @@ Copyright (c) 2013 Far Beyond Code LLC.
 				}
                 tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
                 </cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
+				<cfcatch type="any">
+				<cfdump var="#cfcatch#">
+				<cfdump var="#arguments.configStruct#"><cfabort>
+				</cfcatch>
+				</cftry>
         <cfelse>
             <cfquery attributeCollection="#queryStruct#">#preserveSingleQuotes(arguments.sql)#</cfquery>
         </cfif>
