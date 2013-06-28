@@ -93,12 +93,12 @@ Copyright (c) 2013 Far Beyond Code LLC.
 			}
 		}
 		hashCode=hash(arraytolist(arrOption,""),"sha-256");
-		if(structkeyexists(cacheStruct, hashCode)){
-			if(datediff("s", cacheStruct[hashCode].date, arguments.nowDate) LT arguments.configStruct.cacheForSeconds){
+		if(structkeyexists(arguments.cacheStruct, hashCode)){
+			if(datediff("s", arguments.cacheStruct[hashCode].date, arguments.nowDate) LT arguments.configStruct.cacheForSeconds){
 				arguments.configStruct.dbQuery.reset();
-				return { success:true, hashCode:hashCode, result:cacheStruct[hashCode].result };
+				return { success:true, hashCode:hashCode, result:arguments.cacheStruct[hashCode].result };
 			}else{
-				structdelete(cacheStruct, hashCode);
+				structdelete(arguments.cacheStruct, hashCode);
 			}
 		}
 		return {success:false, hashCode:hashCode};
@@ -152,7 +152,7 @@ Copyright (c) 2013 Far Beyond Code LLC.
                 </cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
 				<cfcatch type="any">
 				<cfdump var="#cfcatch#">
-				<cfdump var="#arguments.configStruct#"><cfabort>
+				<cfdump var="#arguments.configStruct#"><cfscript>request.zos.functions.zabort();</cfscript>
 				</cfcatch>
 				</cftry>
         <cfelse>
