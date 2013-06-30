@@ -116,8 +116,9 @@ Copyright (c) 2013 Far Beyond Code LLC.
 			lazy=arguments.configStruct.lazy,
 			datasource=arguments.configStruct.datasource	
 		};
-        var cfquery=0;
-        var db=structnew();
+		var cfquery=0;
+		var cfcatch=0;
+		var db=structnew();
 		var startIndex=1;
 		var tempSQL=0;
 		var paramCount=arraylen(arguments.configStruct.arrParam);
@@ -142,14 +143,14 @@ Copyright (c) 2013 Far Beyond Code LLC.
 				}
 				running=false;
 				</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfif isnull(arguments.configStruct.arrParam[paramIndex].value)><cfset arguments.configStruct.arrParam[paramIndex].null=true></cfif><cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
-                startIndex=questionMarkPosition+1;
-                paramIndex++;
-                </cfscript></cfif></cfloop><cfscript>
-				if(paramCount GT paramIndex-1){ 
-					variables.throwErrorForTooManyParameters(arguments.configStruct);
-				}
-                tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
-                </cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
+				startIndex=questionMarkPosition+1;
+				paramIndex++;
+				</cfscript></cfif></cfloop><cfscript>
+						if(paramCount GT paramIndex-1){ 
+							variables.throwErrorForTooManyParameters(arguments.configStruct);
+						}
+				tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
+				</cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
 				<cfcatch type="any">
 				<cfdump var="#cfcatch#">
 				<cfdump var="#arguments.configStruct#"><cfscript>request.zos.functions.zabort();</cfscript>
