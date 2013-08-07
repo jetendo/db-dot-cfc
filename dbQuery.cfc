@@ -95,13 +95,15 @@
     
     <cffunction name="insert" access="public" returntype="any" output="no" hint="Use for insert statements to auto-retrieve the inserted id more easily.">
     	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
+    	<cfargument name="idColumn" type="string" required="no" default="id" hint="The name of the sql id column.">
         <cfscript>
+	var executeResult=0;
 		variables.config.sql=this.sql;
-		var executeResult=variables.db.insertAndReturnId(arguments.name, variables.config);
+		executeResult=variables.db.insertAndReturnId(arguments.name, arguments.idColumn, variables.config);
 		variables.lastSQL=this.sql;
 		variables.lastQueryName=arguments.name;
 		this.reset();
-		return executeResult.result;
+		return executeResult;
 		</cfscript>
     </cffunction>
     

@@ -1,6 +1,6 @@
 <!--- 
 db.cfc
-Version: 0.1.001
+Version: 0.1.002
 
 Project Home Page: https://www.jetendo.com/manual/view/current/2.1/db-dot-cfc.html
 Github Home Page: https://github.com/jetendo/db-dot-cfc
@@ -134,39 +134,34 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		queryStruct.name="db."&arguments.name;
 		</cfscript>
 		<cfif paramCount>
-		<cftry>
             <cfquery attributeCollection="#queryStruct#"><cfloop condition="#running#"><cfscript>
                 questionMarkPosition=find("?", arguments.sql, startIndex);
                 </cfscript><cfif questionMarkPosition EQ 0><cfscript>
-				if(paramCount and paramIndex-1 GT paramCount){
-					throw("dbQuery.execute() failed: There were more question marks then parameters in the current sql statement.  You must use dbQuery.param() to specify parameters.  A literal question mark is not allowed.<br /><br />SQL Statement:<br />"&arguments.sql, "database");
+		if(paramCount and paramIndex-1 GT paramCount){
+			throw("dbQuery.execute() failed: There were more question marks then parameters in the current sql statement.  You must use dbQuery.param() to specify parameters.  A literal question mark is not allowed.<br /><br />SQL Statement:<br />"&arguments.sql, "database");
+		}
+		running=false;
+		</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfif isnull(arguments.configStruct.arrParam[paramIndex].value)><cfset arguments.configStruct.arrParam[paramIndex].null=true></cfif><cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
+		startIndex=questionMarkPosition+1;
+		paramIndex++;
+		</cfscript></cfif></cfloop><cfscript>
+				if(paramCount GT paramIndex-1){ 
+					variables.throwErrorForTooManyParameters(arguments.configStruct);
 				}
-				running=false;
-				</cfscript><cfelse><cfset tempSQL=mid(arguments.sql, startIndex, questionMarkPosition-startIndex)>#preserveSingleQuotes(tempSQL)#<cfif isnull(arguments.configStruct.arrParam[paramIndex].value)><cfset arguments.configStruct.arrParam[paramIndex].null=true></cfif><cfqueryparam attributeCollection="#arguments.configStruct.arrParam[paramIndex]#"><cfscript>
-				startIndex=questionMarkPosition+1;
-				paramIndex++;
-				</cfscript></cfif></cfloop><cfscript>
-						if(paramCount GT paramIndex-1){ 
-							variables.throwErrorForTooManyParameters(arguments.configStruct);
-						}
-				tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
-				</cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
-				<cfcatch type="any">
-				<cfdump var="#cfcatch#">
-				<cfdump var="#arguments.configStruct#"><cfscript>request.zos.functions.zabort();</cfscript>
-				</cfcatch>
-				</cftry>
+		tempSQL=mid(arguments.sql, startIndex, len(arguments.sql)-(startIndex-1));
+		</cfscript>#preserveSingleQuotes(tempSQL)#</cfquery>
         <cfelse>
             <cfquery attributeCollection="#queryStruct#">#preserveSingleQuotes(arguments.sql)#</cfquery>
         </cfif>
         <cfscript>
-		if(structkeyexists(db, arguments.name)){
-			return db[arguments.name];
-		}else{
-			return true;
-		}
-		</cfscript>
-    </cffunction>
+	request.zos.lastDBResult=cfquery;
+	if(structkeyexists(db, arguments.name)){
+		return db[arguments.name];
+	}else{
+		return true;
+	}
+	</cfscript>
+</cffunction>
     
     <cffunction name="throwErrorForTooManyParameters" access="private" output="no">
     	<cfargument name="configStruct" type="struct" required="yes">
@@ -197,30 +192,36 @@ Copyright (c) 2013 Far Beyond Code LLC.
     
     <cffunction name="insertAndReturnID" access="package" returntype="any" output="no" hint="Executes the insert statement and returns the inserted ID if insert was successful.">
     	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
+    	<cfargument name="idColumn" type="string" required="no" default="id" hint="The name of the sql id column.">
     	<cfargument name="configStruct" type="struct" required="yes">
         <cfscript>
-		var db=0;
-		var result=variables.execute(arguments.name, arguments.configStruct);
-        var queryStruct={
-			lazy=arguments.configStruct.lazy,
-			datasource=arguments.configStruct.datasource,
-			name:"db."&arguments.name&"_id"
-		};
-		</cfscript>
-        <cfif result.success>
-            <cfquery attributeCollection="#queryStruct#">
-            #preserveSingleQuotes(arguments.configStruct.insertIDSQL)#
-            </cfquery>
-            <cfreturn {success:true, result:db[arguments.name&"_id"]}>
-		<cfelse>
-        	<cfreturn result>
-		</cfif>
+	var db=structnew();
+	var cfquery=0;
+	var queryStruct={
+		lazy=arguments.configStruct.lazy,
+		datasource=arguments.configStruct.datasource,
+		name:"db."&arguments.name&"_id"
+	};
+	var result=variables.execute(arguments.name, arguments.configStruct);
+	</cfscript>
+	<cfif result.success>
+		<cfquery attributeCollection="#queryStruct#">
+		#preserveSingleQuotes(arguments.configStruct.insertIDSQL)#
+		</cfquery>
+		<cfdump var="#queryStruct#">
+		<cfdump var="#db[arguments.name&"_id"]#">
+		<cfabort>
+		<cfreturn {success:true, result:db[arguments.name&"_id"][arguments.idColumn]}>
+	<cfelse>
+		<cfreturn {success:false, result:result}>
+	</cfif>
     </cffunction>
     
     <cffunction name="execute" access="package" returntype="struct" output="yes">
     	<cfargument name="name" type="variablename" required="yes" hint="A variable name for the query result.  Helps to identify query when debugging.">
     	<cfargument name="configStruct" type="struct" required="yes">
         <cfscript>
+	var errorStruct=0;
 		var cacheStruct=structget(arguments.configStruct.cacheStructKey);
 		if(not structkeyexists(arguments.configStruct, 'sql') or not len(arguments.configStruct.sql)){
 			throw("The sql statement must be set before executing the query;", "database");

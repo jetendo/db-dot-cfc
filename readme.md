@@ -1,7 +1,7 @@
 #db-dot-cfc README
 
 - Purpose: Enhances cfquery by analyzing SQL to enforce security & framework conventions.
-- Version: 0.1.001
+- Version: 0.1.002
 - Language(s) used: ColdFusion Markup Language (CFML)
 - Project Home Page: https://www.jetendo.com/manual/view/current/2.1/db-dot-cfc.html
 - GitHub Home Page: https://github.com/jetendo/db-dot-cfc
