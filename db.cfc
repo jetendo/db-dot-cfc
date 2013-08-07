@@ -208,9 +208,6 @@ Copyright (c) 2013 Far Beyond Code LLC.
 		<cfquery attributeCollection="#queryStruct#">
 		#preserveSingleQuotes(arguments.configStruct.insertIDSQL)#
 		</cfquery>
-		<cfdump var="#queryStruct#">
-		<cfdump var="#db[arguments.name&"_id"]#">
-		<cfabort>
 		<cfreturn {success:true, result:db[arguments.name&"_id"][arguments.idColumn]}>
 	<cfelse>
 		<cfreturn {success:false, result:result}>
