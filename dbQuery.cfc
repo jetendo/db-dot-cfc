@@ -39,7 +39,7 @@
 		if(structkeyexists(arguments, 'cfsqltype')){
 			arrayappend(variables.config.arrParam, {value:arguments.value, cfsqltype:arguments.cfsqltype});
 		}else{
-			if(isnumeric(arguments.value)){
+			if(isnumeric(arguments.value) and len(arguments.value) LT 10){
 				if(find(".", arguments.value)){
 					arrayappend(variables.config.arrParam, {value:arguments.value, cfsqltype:'cf_sql_decimal'});
 				}else{
